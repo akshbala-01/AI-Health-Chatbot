@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Health Chatbot</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; border: 1px solid #ddd; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; }
+        #chat-container { border: 1px solid #ccc; height: 350px; overflow-y: auto; padding: 15px; border-radius: 8px; background-color: #f9f9f9; margin-bottom: 20px; }
+        .message { margin-bottom: 15px; max-width: 80%; padding: 10px; border-radius: 18px; line-height: 1.4; }
+        .user { background-color: #e0f7fa; color: #00796b; float: right; border-bottom-right-radius: 2px; }
+        .bot { background-color: #e8eaf6; color: #303f9f; float: left; border-bottom-left-radius: 2px; }
+        .clear { clear: both; }
+        #input-area { text-align: center; }
+        input[type="number"] { padding: 10px; border: 1px solid #ddd; border-radius: 6px; width: 60%; margin-right: 10px; }
+        button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 6px; cursor: pointer; }
+        .explanation { margin-top: 15px; padding: 10px; border: 1px dashed #00796b; border-radius: 8px; background-color: #f1f8e9; }
+    </style>
+</head>
+<body>
+    <h1>🩺 Diabetes Risk Chatbot</h1>
+    <div id="chat-container"></div>
+    <div id="input-area">
+        <form id="chatbot-form">
+            <input type="number" id="input-field" placeholder="Type your answer here..." required>
+            <button type="submit" id="send-button">Send</button>
+        </form>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const form = document.getElementById('chatbot-form');
+        const inputField = document.getElementById('input-field');
+
+        // Define the sequence of questions based on your API's FEATURES array
+        const questions = [
+            { key: 'Pregnancies', text: 'Hello! I am your AI Health Assistant. To assess your risk, please tell me: How many times have you been pregnant?' },
+            { key: 'Glucose', text: 'What is your Plasma Glucose concentration (mg/dL)? (Enter 0 if unknown)' },
+            { key: 'BloodPressure', text: 'What is your Diastolic Blood Pressure (mmHg)? (Enter 0 if unknown)' },
+            { key: 'SkinThickness', text: 'What is your Triceps Skin Fold Thickness (mm)? (Enter 0 if unknown)' },
+            { key: 'Insulin', text: 'What is your 2-Hour Serum Insulin level (mu U/ml)? (Enter 0 if unknown)' },
+            { key: 'BMI', text: 'What is your Body Mass Index (BMI)?' },
+            { key: 'DiabetesPedigreeFunction', text: 'What is your Diabetes Pedigree Function score (a measure of family history)?' },
+            { key: 'Age', text: 'Finally, what is your Age in years?' },
+        ];
+        
+        let currentStep = 0;
+        const patientData = {};
+
+        // Helper function to display messages
+        function appendMessage(text, sender) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${sender}`;
+            msgDiv.innerHTML = text;
+            chatContainer.appendChild(msgDiv);
+            chatContainer.appendChild(document.createElement('div')).className = 'clear';
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // Starts the conversation
+        function askQuestion() {
+            if (currentStep < questions.length) {
+                appendMessage(questions[currentStep].text, 'bot');
+            } else {
+                processPrediction();
+            }
+            inputField.value = '';
+            inputField.placeholder = `Enter value for ${questions[currentStep]?.key}`;
+        }
+
+        // Handles form submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const answer = inputField.value;
+
+            if (!answer || isNaN(parseFloat(answer))) {
+                appendMessage("Please enter a valid number.", 'bot');
+                return;
+            }
+            
+            // 1. Record user's answer
+            const key = questions[currentStep].key;
+            patientData[key] = parseFloat(answer);
+            appendMessage(answer, 'user');
+            
+            currentStep++;
+            
+            // 2. Move to next step or predict
+            if (currentStep < questions.length) {
+                askQuestion();
+            } else {
+                inputField.disabled = true;
+                document.getElementById('send-button').disabled = true;
+                appendMessage('Thank you. Calculating your risk now...', 'bot');
+                processPrediction();
+            }
+        });
+
+        // Makes the API call and displays the results
+        async function processPrediction() {
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(patientData)
+                });
+
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                const result = await response.json();
+                
+                const probPercent = (result.probability * 100).toFixed(2);
+                const riskColor = result.risk === 'High' ? 'red' : result.risk === 'Medium' ? 'orange' : 'green';
+                
+                // Construct the final result message
+                let botMessage = `
+                    <p>✅ **Prediction Complete!**</p>
+                    <p>Your calculated probability of diabetes is: <strong style="color: ${riskColor};">${probPercent}%</strong></p>
+                    <p>Risk Level: <strong style="color: ${riskColor};">${result.risk}</strong></p>
+                `;
+
+                // Add the SHAP explanation
+                if (result.explanation && result.explanation.length > 0) {
+                    let explanationHTML = '<p>--- **Why this result?** (Top 3 factors) ---</p>';
+                    result.explanation.forEach(exp => {
+                        const score = exp.contribution_score;
+                        const impact = score > 0 ? 'increasing' : 'decreasing';
+                        explanationHTML += `<p>• **${exp.feature}** (Value: ${exp.value}) is strongly ${impact} your risk (SHAP Score: ${score}).</p>`;
+                    });
+                    botMessage += `<div class="explanation">${explanationHTML}</div>`;
+                }
+
+                appendMessage(botMessage, 'bot');
+                
+            } catch (error) {
+                appendMessage(`❌ **ERROR:** Could not reach the prediction service. Please ensure the Flask server is running. (${error.message})`, 'bot');
+            }
+        }
+
+        // Start the chatbot conversation when the page loads
+        askQuestion();
+    </script>
+</body>
+</html>
